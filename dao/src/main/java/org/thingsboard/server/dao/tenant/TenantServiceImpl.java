@@ -49,6 +49,7 @@ import org.thingsboard.server.dao.notification.NotificationTargetService;
 import org.thingsboard.server.dao.notification.NotificationTemplateService;
 import org.thingsboard.server.dao.ota.OtaPackageService;
 import org.thingsboard.server.dao.queue.QueueService;
+import org.thingsboard.server.dao.queue.QueueStatsService;
 import org.thingsboard.server.dao.resource.ResourceService;
 import org.thingsboard.server.dao.rpc.RpcService;
 import org.thingsboard.server.dao.rule.RuleChainService;
@@ -131,6 +132,10 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
     @Autowired
     private QueueService queueService;
 
+    @Lazy
+    @Autowired
+    private QueueStatsService queueStatsService;
+
     @Autowired
     private AdminSettingsService adminSettingsService;
 
@@ -165,7 +170,7 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
     @Override
     public Tenant findTenantById(TenantId tenantId) {
         log.trace("Executing findTenantById [{}]", tenantId);
-        Validator.validateId(tenantId, INCORRECT_TENANT_ID + tenantId);
+        Validator.validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
 
         return cache.getAndPutInTransaction(tenantId, () -> tenantDao.findById(tenantId, tenantId.getId()), true);
     }
@@ -173,20 +178,26 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
     @Override
     public TenantInfo findTenantInfoById(TenantId tenantId) {
         log.trace("Executing findTenantInfoById [{}]", tenantId);
-        validateId(tenantId, INCORRECT_TENANT_ID + tenantId);
+        validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
         return tenantDao.findTenantInfoById(tenantId, tenantId.getId());
     }
 
     @Override
     public ListenableFuture<Tenant> findTenantByIdAsync(TenantId callerId, TenantId tenantId) {
         log.trace("Executing findTenantByIdAsync [{}]", tenantId);
-        validateId(tenantId, INCORRECT_TENANT_ID + tenantId);
+        validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
         return tenantDao.findByIdAsync(callerId, tenantId.getId());
     }
 
     @Override
     @Transactional
     public Tenant saveTenant(Tenant tenant) {
+        return saveTenant(tenant, true);
+    }
+
+    @Override
+    @Transactional
+    public Tenant saveTenant(Tenant tenant, boolean publishSaveEvent) {
         log.trace("Executing saveTenant [{}]", tenant);
         tenant.setRegion(DEFAULT_TENANT_REGION);
         if (tenant.getTenantProfileId() == null) {
@@ -197,7 +208,10 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
         boolean create = tenant.getId() == null;
         Tenant savedTenant = tenantDao.save(tenant.getId(), tenant);
         publishEvictEvent(new TenantEvictEvent(savedTenant.getId(), create));
-        eventPublisher.publishEvent(SaveEntityEvent.builder().tenantId(savedTenant.getId()).entityId(savedTenant.getId()).created(create).build());
+        if (publishSaveEvent) {
+            eventPublisher.publishEvent(SaveEntityEvent.builder().tenantId(savedTenant.getId())
+                    .entityId(savedTenant.getId()).entity(savedTenant).created(create).build());
+        }
         if (tenant.getId() == null) {
             deviceProfileService.createDefaultDeviceProfile(savedTenant.getId());
             assetProfileService.createDefaultAssetProfile(savedTenant.getId());
@@ -219,7 +233,8 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
     @Override
     public void deleteTenant(TenantId tenantId) {
         log.trace("Executing deleteTenant [{}]", tenantId);
-        Validator.validateId(tenantId, INCORRECT_TENANT_ID + tenantId);
+        Tenant tenant = findTenantById(tenantId);
+        Validator.validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
         entityViewService.deleteEntityViewsByTenantId(tenantId);
         widgetsBundleService.deleteWidgetsBundlesByTenantId(tenantId);
         widgetTypeService.deleteWidgetTypesByTenantId(tenantId);
@@ -245,9 +260,11 @@ public class TenantServiceImpl extends AbstractCachedEntityService<TenantId, Ten
         adminSettingsService.deleteAdminSettingsByTenantId(tenantId);
         tenantDao.removeById(tenantId, tenantId.getId());
         publishEvictEvent(new TenantEvictEvent(tenantId, true));
-        eventPublisher.publishEvent(DeleteEntityEvent.builder().tenantId(tenantId).entityId(tenantId).build());
+        eventPublisher.publishEvent(DeleteEntityEvent.builder().tenantId(tenantId)
+                .entity(tenant).entityId(tenantId).build());
         relationService.deleteEntityRelations(tenantId, tenantId);
         alarmService.deleteEntityAlarmRecordsByTenantId(tenantId);
+        queueStatsService.deleteByTenantId(tenantId);
     }
 
     @Override
