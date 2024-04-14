@@ -21,8 +21,12 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.thingsboard.common.util.JacksonUtil;
 
+// import javax.annotation.PostConstruct;
+// import java.io.IOException;
+import org.apache.commons.io.IOUtils;
 import javax.annotation.PostConstruct;
 import java.io.IOException;
+import java.io.InputStream;
 
 @Service
 @Slf4j
@@ -32,7 +36,14 @@ public class DefaultTbMailConfigTemplateService implements TbMailConfigTemplateS
 
     @PostConstruct
     private void postConstruct() throws IOException {
-        mailConfigTemplates = JacksonUtil.toJsonNode(new ClassPathResource("/templates/mail_config_templates.json").getFile());
+        //mailConfigTemplates = JacksonUtil.toJsonNode(new ClassPathResource("/templates/mail_config_templates.json").getFile());
+		try (InputStream inputStream = new ClassPathResource("/templates/mail_config_templates.json").getInputStream()) {
+        String jsonContent = IOUtils.toString(inputStream, "UTF-8"); 
+        mailConfigTemplates = JacksonUtil.toJsonNode(jsonContent); 
+		} catch (IOException e) {
+			log.error("Error loading mail config templates.", e);
+			throw e;
+		}
     }
 
     @Override
